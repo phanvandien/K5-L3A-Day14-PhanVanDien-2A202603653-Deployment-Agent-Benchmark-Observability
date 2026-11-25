@@ -89,8 +89,8 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"      # HTTP
-      - "443:443"    # HTTPS (cần cert)
+      - "8081:80"    # HTTP (đổi từ 80 vì IIS chiếm cổng 80 trên máy)
+      - "8443:443"   # HTTPS (cần cert)
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
