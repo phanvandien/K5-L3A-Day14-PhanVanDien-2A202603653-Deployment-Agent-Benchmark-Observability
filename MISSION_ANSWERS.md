@@ -160,7 +160,16 @@ X-XSS-Protection: 1; mode=block
 ### So sánh `railway.toml` và `render.yaml`
 
 ### Exercise 3.3: Pipeline Cloud Run (`cloudbuild.yaml` + `service.yaml`)
+cloudbuild.yaml: pipeline CI/CD gồm 4 bước, chạy tuần tự nhờ waitFor:
+1. test: dùng python:3.11-slim, chạy pip install rồi pytest tests/. Nếu test fail thì pipeline dừng ở đây, không deploy.
+2. build: build Docker image, gắn 2 tag là $COMMIT_SHA và latest, dùng --cache-from latest để tận dụng layer cache.
+3. push: đẩy image lên Container Registry (gcr.io/$PROJECT_ID/ai-agent).
+4. deploy: chạy gcloud run deploy với image theo đúng $COMMIT_SHA, region asia-southeast1, min 1 và max 10 instance, 512Mi RAM, 1 CPU. Secret lấy từ Secret Manager (--set-secrets), không ghi trong code.
 
+service.yaml: khai báo service theo kiểu Knative:
+- autoscale từ 1 đến 10 instance, mỗi instance nhận tối đa 80 request đồng thời (containerConcurrency: 80);
+- AGENT_API_KEY và OPENAI_API_KEY lấy qua secretKeyRef;
+- livenessProbe gọi /health, startupProbe gọi /ready.
 ---
 
 ## Part 4: API Security
@@ -264,14 +273,119 @@ referrer-policy: strict-origin-when-cross-origin
 ## Part 5: Scaling & Reliability
 
 ### Exercise 5.1: Health checks
+HTTP/1.1 200 OK
+date: Wed, 25 Nov 2026 09:41:49 GMT
+server: uvicorn
+content-length: 186
+content-type: application/json
+
+{"status":"ok","uptime_seconds":31.1,"version":"1.0.0","environment":"development","timestamp":"2026-11-25T09:41:49.926469+00:00","checks":{"memory":{"status"}
+HTTP/1.1 200 OK
+date: Wed, 25 Nov 2026 09:43:16 GMT
+server: uvicorn
+content-length: 37
+content-type: application/json
+
+{"ready":true,"in_flight_requests":1}
 ### Exercise 5.2: Graceful shutdown
+Đọc develop/app.py. Code này đã cài sẵn các phần sau:
+
+- biến _in_flight_requests đếm số request đang xử lý, được cập nhật bởi middleware ở dòng 72–81;
+- khi tắt, lifespan đặt _is_ready = False, rồi chờ request đang chạy xong (có timeout) mới thoát (dòng 55–63);
+- hàm handle_sigterm (dòng 175) ghi log khi nhận SIGTERM.
 ### Exercise 5.3: Stateless design
+- Session và conversation history được lưu trong Redis bằng setex("session:<id>", ttl) (dòng 59–90), không lưu trong một dict trong RAM.
+- Vì sao cần làm vậy: khi chạy 3 instance, mỗi instance có RAM riêng. Request 1 của user A rơi vào instance 1, request 2 rơi vào instance 2, và instance 2 không thấy history trong RAM của instance 1. Khi lưu ở Redis, instance nào cũng đọc được cùng một dữ liệu.
+- Thêm một ý: instance chết hoặc restart cũng không làm mất state.
 ### Exercise 5.4: Load balancing
+HTTP/1.1 200 OK
+Server: nginx/1.31.10
+Date: Wed, 25 Nov 2026 10:00:31 GMT
+Content-Type: application/json
+Content-Length: 110
+Connection: keep-alive
+X-Served-By: 172.21.0.4:8000
+
+{"status":"ok","instance_id":"instance-fc9899","uptime_seconds":46.8,"storage":"redis","redis_connected":true}
+
 ### Exercise 5.5: Test stateless
 ```text
-<!-- TODO -->
-```
+Stateless Scaling Demo
+============================================================
 
+Session ID: c1cfb9b8-a9d8-4560-805f-cd0aebfd837c
+
+Request 1: [instance-5963ab]
+  Q: What is Docker?
+  A: Container là cách đóng gói app để chạy ở mọi nơi. Build once, run anywhere!...
+
+Request 2: [instance-cf6342]
+  Q: Why do we need containers?
+  A: Tôi là AI agent được deploy lên cloud. Câu hỏi của bạn đã được nhận....
+
+Request 3: [instance-fc9899]
+  Q: What is Kubernetes?
+  A: Đây là câu trả lời từ AI agent (mock). Trong production, đây sẽ là response từ O...
+
+Request 4: [instance-5963ab]
+  Q: How does load balancing work?
+  A: Agent đang hoạt động tốt! (mock response) Hỏi thêm câu hỏi đi nhé....
+
+Request 5: [instance-cf6342]
+  Q: What is Redis used for?
+  A: Đây là câu trả lời từ AI agent (mock). Trong production, đây sẽ là response từ O...
+
+------------------------------------------------------------
+Total requests: 5
+Instances used: {'instance-5963ab', 'instance-cf6342', 'instance-fc9899'}
+✅ All requests served despite different instances!
+
+--- Conversation History ---
+Total messages: 10
+  [user]: What is Docker?...
+  [assistant]: Container là cách đóng gói app để chạy ở mọi nơi. Build once...
+  [user]: Why do we need containers?...
+  [assistant]: Tôi là AI agent được deploy lên cloud. Câu hỏi của bạn đã đư...
+  [user]: What is Kubernetes?...
+  [assistant]: Đây là câu trả lời từ AI agent (mock). Trong production, đây...
+  [user]: How does load balancing work?...
+  [assistant]: Agent đang hoạt động tốt! (mock response) Hỏi thêm câu hỏi đ...
+  [user]: What is Redis used for?...
+  [assistant]: Đây là câu trả lời từ AI agent (mock). Trong production, đây...
+
+✅ Session history preserved across all instances via Redis!
+
+agent-2  | INFO:     127.0.0.1:37790 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     127.0.0.1:47542 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     127.0.0.1:46654 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     172.21.0.6:59124 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     127.0.0.1:34212 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     127.0.0.1:36584 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     127.0.0.1:52234 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     172.21.0.6:48392 - "POST /chat HTTP/1.1" 200 OK
+agent-2  | INFO:     172.21.0.6:48392 - "GET /chat/c1cfb9b8-a9d8-4560-805f-cd0aebfd837c/history HTTP/1.1" 200 OK
+agent-2  | INFO:     127.0.0.1:38870 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     127.0.0.1:47922 - "GET /health HTTP/1.1" 200 OK
+agent-2  | INFO:     127.0.0.1:58912 - "GET /health HTTP/1.1" 200 OK
+agent-1  | ✅ Connected to Redis
+agent-1  | INFO:     Started server process [1]
+agent-1  | INFO:     Waiting for application startup.
+agent-1  | INFO:app:Starting instance instance-5963ab
+agent-1  | INFO:app:Storage: Redis ✅
+agent-1  | INFO:     Application startup complete.
+agent-1  | INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+agent-1  | INFO:     127.0.0.1:37776 - "GET /health HTTP/1.1" 200 OK
+agent-1  | INFO:     127.0.0.1:47530 - "GET /health HTTP/1.1" 200 OK
+agent-1  | INFO:     127.0.0.1:46638 - "GET /health HTTP/1.1" 200 OK
+agent-1  | INFO:     127.0.0.1:34208 - "GET /health HTTP/1.1" 200 OK
+agent-1  | INFO:     127.0.0.1:36570 - "GET /health HTTP/1.1" 200 OK
+agent-1  | INFO:     127.0.0.1:52222 - "GET /health HTTP/1.1" 200 OK
+agent-1  | INFO:     172.21.0.6:52058 - "POST /chat HTTP/1.1" 200 OK
+agent-1  | INFO:     172.21.0.6:52058 - "POST /chat HTTP/1.1" 200 OK
+agent-1  | INFO:     127.0.0.1:38854 - "GET /health HTTP/1.1" 200 OK
+agent-1  | INFO:     127.0.0.1:47912 - "GET /health HTTP/1.1" 200 OK
+agent-1  | INFO:     127.0.0.1:58896 - "GET /health HTTP/1.1" 200 OK
+```
 ---
 
 ## Part 6: Final Project — output `check_production_ready.py`
@@ -289,3 +403,4 @@ referrer-policy: strict-origin-when-cross-origin
 | 2026-11-25 | Claude Code: phân tích `develop/app.py` và `production/app.py` cho Part 1 | Bảng anti-pattern 1.1 và bảng so sánh 1.3 | Đối chiếu từng dòng code được trích; tự chạy 1.2 và 1.3 và dán output thật |
 | 2026-11-25 | Claude Code: hướng dẫn Part 2, sửa lỗi cổng 80 bị IIS chiếm | Gợi ý trả lời 2.1, giải thích multi-stage, đổi port nginx sang 8081 | Tự build image, tự đo `docker images`, tự chạy compose và curl |
 | 2026-11-25 | Claude Code: kiểm tra Part 2 và Part 4 | Phát hiện token JWT bị lộ trong bài và lỗi 403 `Invalid token` do biến `TOKEN` đặt sai | Che token, chạy lại 4.2 và 4.3 |
+| 2026-11-25 | Claude Code: hoàn thành các TODO Part 6 (`06-lab-complete/`) | Code `config.py`, `auth.py`, `redis_client.py`, `rate_limiter.py` (Redis sorted set), `cost_guard.py` (Redis, key theo ngày), `main.py` (log JSON, /health, /ready, lifespan shutdown), Dockerfile multi-stage, compose, `.dockerignore`, `.env.example`, `railway.toml`, `render.yaml` | Đọc hiểu từng file, tự chạy `check_production_ready.py` trong WSL tới PASS 12/12 |
