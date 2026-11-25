@@ -390,7 +390,22 @@ agent-1  | INFO:     127.0.0.1:58896 - "GET /health HTTP/1.1" 200 OK
 
 ## Part 6: Final Project — output `check_production_ready.py`
 ```text
-<!-- TODO: dán phần "📋 Checklist Deliverable" -->
+Checklist Deliverable
+     ✅ Dockerfile (multi-stage, < 500 MB)
+     ✅ docker-compose.yml (agent + redis)
+     ✅ .dockerignore
+     ✅ Health check endpoint (GET /health)
+     ✅ Readiness endpoint (GET /ready)
+     ✅ API Key authentication
+     ✅ Rate limiting
+     ✅ Cost guard
+     ✅ Config từ environment variables
+     ✅ Structured logging
+     ✅ Graceful shutdown
+     ✅ Public URL ready (Railway / Render config)
+----------------------------------------------------------------
+  Result: 12/12 tiêu chí đạt · 43/43 checks passed
+  🎉 PASS 12/12 — PRODUCTION READY! Deploy nào!
 ```
 
 ---
